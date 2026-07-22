@@ -1,0 +1,24 @@
+name: Lint SPL queries
+
+on:
+  push:
+    paths:
+      - "**/*.spl"
+      - "scripts/lint_spl.py"
+      - ".github/workflows/lint-spl.yml"
+  pull_request:
+    paths:
+      - "**/*.spl"
+      - "scripts/lint_spl.py"
+      - ".github/workflows/lint-spl.yml"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Lint .spl files
+        run: python3 scripts/lint_spl.py
