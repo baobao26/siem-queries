@@ -14,24 +14,37 @@ This repo holds saved SIEM (Splunk) queries and the investigation notes generate
 
 ## The `/query` command
 
-`/query <query-file> [timerange]`
+`/query <query-file> [timerange] [severity] [assignee] [case_id] [output_dir]`
 
-Reads an SPL query from `<query-file>`, runs it against Splunk via the REST API, analyzes the results for suspicious activity, maps findings to MITRE ATT&CK techniques, and writes an investigation note to `investigations/`.
+Reads an SPL query from `<query-file>`, runs it against Splunk via the REST API, analyzes the results for suspicious activity, maps findings to MITRE ATT&CK techniques, and writes an investigation note to `<output_dir>` (default `investigations/`).
+
+- `severity` — one of `info`, `low`, `medium`, `high`, `critical`; invalid values stop the command rather than guessing.
+- `assignee` — analyst name recorded on the note.
+- `case_id` — links the note to an existing case/ticket.
+- `output_dir` — where the note is saved; defaults to `investigations/`.
+
+All four are optional. Any not supplied are simply omitted from the note rather than defaulted/guessed.
 
 Requires environment variables `SPLUNK_HOST` and `SPLUNK_TOKEN`. If either is unset, the command should stop and say so rather than guessing.
 
+Before submitting anything to Splunk, inputs are validated:
+- SPL syntax is checked via Splunk's `/services/search/parser` endpoint (not guessed) — a parser error stops the command.
+- Timerange must match a Splunk relative modifier (`-<integer>(m|h|d)`, optionally snapped, e.g. `-24h`, `-7d@d`) — a hard stop if not.
+- Severity must be one of the five allowed values — a hard stop if not (see above).
+- `case_id` is checked against a loose ticket-ID shape (e.g. `CASE-1234`) — this one's a warning only, not a hard stop, since this repo doesn't mandate a specific ticketing system.
+
 Flow (full detail in `.claude/commands/query.md`):
-1. Read the query file; prefix with `search ` unless it already starts with `search` or a piped generating command (`|tstats`, `|datamodel`, etc.).
+1. Read the query file; prefix with `search ` unless it already starts with `search` or a piped generating command (`|tstats`, `|datamodel`, etc.). Run input validation (above) before continuing.
 2. Submit to `POST https://$SPLUNK_HOST:8089/services/search/jobs` (`earliest_time` = `$2`, default `-24h`; `latest_time=now`) and capture the `sid`.
 3. Poll `GET .../services/search/jobs/<sid>` until `dispatchState` is `DONE` or `FAILED`.
 4. Fetch `GET .../services/search/jobs/<sid>/results?output_mode=json&count=0`.
 5. `DELETE` the job to avoid leaving it on the search head (non-fatal if this fails).
 6. Analyze events for suspicious patterns (anomalous process lineage, encoded command lines, LOLBins, credential access artifacts, rare/first-seen values, beaconing, etc.) — grounded only in what's actually in the result set.
 7. Map each supported finding to the most specific ATT&CK technique/sub-technique ID.
-8. Write `investigations/<YYYY-MM-DD>_<slug-of-query-filename>.md` with:
-   - YAML frontmatter: `date`, `tags` (`siem`, `investigation`, plus one tag per technique ID), `techniques` (list of IDs).
+8. Write `<output_dir>/<YYYY-MM-DD>_<slug-of-query-filename>.md` with:
+   - YAML frontmatter: `date`, `tags` (`siem`, `investigation`, plus one tag per technique ID), `techniques` (list of IDs), plus `severity`/`assignee`/`case_id` when supplied.
    - `[[T1003.001]]`-style Obsidian backlinks inline for every mapped technique.
-   - **Summary**, **Query** (raw SPL + time range), **Results** (count + driving events), and an empty **Analyst Notes** heading for the human to fill in.
+   - **Summary**, **Query** (raw SPL + time range), **Results** (count + driving events), and an empty **Analyst Notes** heading for the human to fill in (with a linked-case note above it when `case_id` is supplied).
 
 Auth note: Splunk deployments vary between `Authorization: Bearer <token>` and `Authorization: Splunk <token>` — if the first is rejected, retry with the other before failing.
 
